@@ -11,20 +11,19 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
-echo "[1/4] Update repository..."
+echo "[1/5] Update repository..."
 apt-get update -y >/dev/null
 echo "✔ Repository updated"
 
-echo "[2/4] Install dependencies (curl + pv)..."
+echo "[2/5] Install dependencies (curl + pv)..."
 apt-get install -y curl pv >/dev/null
 echo "✔ curl dan pv terinstall"
 
-echo "[3/4] Download & install JumpCloud Agent..."
+echo "[3/5] Download & install JumpCloud Agent..."
 echo "-----------------------------------------"
 echo " Progress (download stream):"
 echo "-----------------------------------------"
 
-# Jalankan Kickstart + progress bar
 curl --tlsv1.2 --silent --show-error \
   --header 'x-connect-key: jcc_eyJwdWJsaWNLaWNrc3RhcnRVcmwiOiJodHRwczovL2tpY2tzdGFydC5qdW1wY2xvdWQuY29tIiwicHJpdmF0ZUtpY2tzdGFydFVybCI6Imh0dHBzOi8vcHJpdmF0ZS1raWNrc3RhcnQuanVtcGNsb3VkLmNvbSIsImNvbm5lY3RLZXkiOiIzYWIxNTA0YTI2MmFiM2E4YTNmMzViMzE0MTRiNjdjMDcwODU0YTg1In0g' \
   https://kickstart.jumpcloud.com/Kickstart \
@@ -32,22 +31,38 @@ curl --tlsv1.2 --silent --show-error \
 | bash
 
 echo "-----------------------------------------"
-echo "[4/4] Verifikasi instalasi..."
+echo "[4/5] Verifikasi instalasi JumpCloud Agent..."
 
-# Service JumpCloud yang benar biasanya "jcagent"
 if systemctl is-active --quiet jcagent; then
-  echo "✅ INSTALLATION SUCCESS"
-  echo "Service: jcagent (active)"
+  echo "✅ JumpCloud Agent aktif (jcagent)"
 else
-  echo "⚠️ Agent terinstall, tapi service belum aktif / nama service berbeda."
-  echo "Coba cek service yang ada:"
-  echo "  systemctl list-units --type=service | grep -i jc"
-  echo ""
-  echo "Log (jcagent):"
-  echo "  journalctl -u jcagent --no-pager -n 100"
+  echo "❌ JumpCloud Agent tidak aktif"
+  echo "Cek log:"
+  journalctl -u jcagent --no-pager -n 50
   exit 1
 fi
 
+echo "-----------------------------------------"
+echo "[5/5] Disable Wayland (GDM3)..."
+
+GDM_CONF="/etc/gdm3/custom.conf"
+BACKUP="${GDM_CONF}.bak.$(date +%F_%H%M%S)"
+
+# Backup config
+cp "$GDM_CONF" "$BACKUP"
+echo "✔ Backup dibuat: $BACKUP"
+
+# Jika ada WaylandEnable (comment/uncomment), set ke false
+if grep -Eq '^\s*#?\s*WaylandEnable\s*=' "$GDM_CONF"; then
+  sed -i 's/^\s*#\?\s*WaylandEnable\s*=.*/WaylandEnable=false/' "$GDM_CONF"
+  echo "✔ WaylandEnable diset ke false"
+else
+  echo "WaylandEnable=false" >> "$GDM_CONF"
+  echo "✔ WaylandEnable ditambahkan ke file"
+fi
+
 echo "========================================="
-echo " Selesai"
+echo " SEMUA STEP SELESAI"
 echo "========================================="
+echo "⚠️ REBOOT diperlukan agar perubahan Wayland berlaku"
+echo "   Jalankan: sudo reboot"
