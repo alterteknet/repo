@@ -1,30 +1,36 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+################################################################################
+# JumpCloud Agent Installer (Ubuntu only)
+# - Install JumpCloud Agent
+# - Verify jcagent
+# - Disable Wayland (force X11 for Remote Assist)
+################################################################################
+set -e
 
-echo "========================================="
-echo " JumpCloud Agent + Disable Wayland Script"
-echo "========================================="
-
-# Pastikan root
-if [ "${EUID}" -ne 0 ]; then
-  echo "[ERROR] Jalankan sebagai root: sudo $0"
-  exit 1
+if [[ "${UID}" != 0 ]]; then
+    (>&2 echo "Error: $0 must be run as root")
+    exit 1
 fi
 
-# ---------- STEP 1: Update repo ----------
-echo "[1/6] apt-get update..."
+echo "========================================="
+echo " JumpCloud Agent Installer (Ubuntu)"
+echo "========================================="
+
+# ------------------------------------------------------------------
+# Step 1: Update repo & install deps
+# ------------------------------------------------------------------
+echo "[1/7] Update repository..."
 apt-get update -y >/dev/null
-echo "✔ Repository updated"
+echo "✔ apt update done"
 
-# ---------- STEP 2: Install deps ----------
-echo "[2/6] Install dependencies (curl + pv)..."
+echo "[2/7] Install dependencies (curl + pv)..."
 apt-get install -y curl pv >/dev/null
-echo "✔ curl dan pv terinstall"
+echo "✔ dependencies installed"
 
-# ---------- STEP 3: Run JumpCloud Kickstart ----------
-echo "[3/6] Install JumpCloud Agent (Kickstart)..."
-echo "-----------------------------------------"
-echo " Progress (download stream):"
+# ------------------------------------------------------------------
+# Step 2: Install JumpCloud Agent
+# ------------------------------------------------------------------
+echo "[3/7] Install JumpCloud Agent (Kickstart)..."
 echo "-----------------------------------------"
 
 curl --tlsv1.2 --silent --show-error \
@@ -34,59 +40,84 @@ curl --tlsv1.2 --silent --show-error \
 | bash
 
 echo "-----------------------------------------"
-echo "[4/6] Verifikasi JumpCloud service (jcagent)..."
 
-# pastikan systemd kenal service terbaru
+# ------------------------------------------------------------------
+# Step 3: Verify JumpCloud service
+# ------------------------------------------------------------------
+echo "[4/7] Verify JumpCloud service (jcagent)..."
+
 systemctl daemon-reload >/dev/null 2>&1 || true
 
 if systemctl is-active --quiet jcagent; then
-  echo "✅ JumpCloud Agent aktif (jcagent)"
+    echo "✅ JumpCloud Agent aktif (jcagent)"
 else
-  echo "❌ JumpCloud Agent tidak aktif (jcagent)"
-  echo "Cek status:"
-  systemctl status jcagent --no-pager || true
-  echo "Cek log:"
-  journalctl -u jcagent --no-pager -n 100 || true
-  exit 1
+    echo "❌ JumpCloud Agent tidak aktif"
+    systemctl status jcagent --no-pager || true
+    journalctl -u jcagent --no-pager -n 50 || true
+    exit 1
 fi
 
-# ---------- STEP 5: Disable Wayland ----------
-echo "-----------------------------------------"
-echo "[5/6] Disable Wayland (GDM3) ..."
+# ------------------------------------------------------------------
+# Step 4: Detect current windowing system
+# ------------------------------------------------------------------
+echo "[5/7] Detect current windowing system..."
+
+windowingSystem="${XDG_SESSION_TYPE:-}"
+if [[ -z "$windowingSystem" ]]; then
+    windowingSystem="$(loginctl show-session \
+        "$(loginctl list-sessions --no-legend | awk 'NR==1{print $1}')" \
+        -p Type 2>/dev/null | awk -F= '{print $2}')"
+fi
+
+echo "Current windowing system: ${windowingSystem:-unknown}"
+
+# ------------------------------------------------------------------
+# Step 5: Disable Wayland (Ubuntu GDM3)
+# ------------------------------------------------------------------
+echo "[6/7] Disable Wayland (Ubuntu /etc/gdm3/custom.conf)..."
 
 GDM_CONF="/etc/gdm3/custom.conf"
 
-if [ -f "$GDM_CONF" ]; then
-  BACKUP="${GDM_CONF}.bak.$(date +%F_%H%M%S)"
-  cp -a "$GDM_CONF" "$BACKUP"
-  echo "✔ Backup dibuat: $BACKUP"
+if [[ -f "$GDM_CONF" ]]; then
+    BACKUP="${GDM_CONF}.bak.$(date +%F_%H%M%S)"
+    cp -a "$GDM_CONF" "$BACKUP"
+    echo "✔ Backup created: $BACKUP"
 
-  # Ubah #WaylandEnable=false -> WaylandEnable=false
-  if grep -qE '^\s*#\s*WaylandEnable\s*=\s*false\s*$' "$GDM_CONF"; then
-    sed -i 's/^\s*#\s*WaylandEnable\s*=\s*false\s*$/WaylandEnable=false/' "$GDM_CONF"
-  # Kalau ada parameter lain (true/false, comment/uncomment), paksa false
-  elif grep -qE '^\s*#?\s*WaylandEnable\s*=' "$GDM_CONF"; then
-    sed -i 's/^\s*#\?\s*WaylandEnable\s*=.*/WaylandEnable=false/' "$GDM_CONF"
-  else
-    printf "\nWaylandEnable=false\n" >> "$GDM_CONF"
-  fi
+    if grep -qE '^\s*#?\s*WaylandEnable\s*=' "$GDM_CONF"; then
+        sed -i 's/^\s*#\?\s*WaylandEnable\s*=.*/WaylandEnable=false/' "$GDM_CONF"
+    else
+        echo "" >> "$GDM_CONF"
+        echo "WaylandEnable=false" >> "$GDM_CONF"
+    fi
 
-  echo "✔ WaylandEnable diset ke false"
-  echo "Baris aktif:"
-  grep -nE '^\s*WaylandEnable\s*=' "$GDM_CONF" || true
+    echo "✔ Wayland disabled in config:"
+    grep -nE '^\s*WaylandEnable\s*=' "$GDM_CONF" || true
 else
-  echo "⚠️ File $GDM_CONF tidak ditemukan. Skip disable Wayland."
+    echo "⚠️ $GDM_CONF not found, skip Wayland configuration"
 fi
 
-# ---------- STEP 6: Finish ----------
+# ------------------------------------------------------------------
+# Step 6: Finish & apply notice
+# ------------------------------------------------------------------
+echo "[7/7] Finished"
 echo "-----------------------------------------"
-echo "[6/6] Selesai"
-echo "✅ JumpCloud: OK"
-echo "✅ Wayland: konfigurasi sudah di-set (butuh reboot / restart gdm3)"
+echo "IMPORTANT:"
+echo "- Wayland config sudah diubah"
+echo "- Session AKTIF masih: ${windowingSystem:-unknown}"
 echo ""
-echo "Agar perubahan Wayland aktif, pilih salah satu:"
-echo "  (A) Reboot (disarankan):  sudo reboot"
-echo "  (B) Restart GDM (logout GUI): sudo systemctl restart gdm3"
+echo "Agar JumpCloud Remote Assist berfungsi:"
+echo "  (A) Reboot (disarankan): sudo reboot"
+echo "  (B) Restart GDM3 (logout GUI): sudo systemctl restart gdm3"
+echo ""
 echo "Verifikasi setelah login:"
-echo "  echo \$XDG_SESSION_TYPE   # harusnya: x11"
+echo "  echo \$XDG_SESSION_TYPE   # harus: x11"
 echo "========================================="
+
+# Optional auto-apply
+if [[ "${APPLY_GDM_RESTART:-0}" == "1" ]]; then
+    echo "APPLY_GDM_RESTART=1 → Restarting gdm3 in 5 seconds..."
+    sleep 5
+    systemctl restart gdm3
+fi
+
+exit 0
