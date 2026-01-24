@@ -18,8 +18,8 @@ apt-get purge -y jcagent
 echo "Removing /opt/jc directory..."
 rm -rf /opt/jc
 
-echo "Removing jc_user_ro..."
-rm -rf jc_user_ro
+echo "Removing /opt/jc_user_ro diectory..."
+rm -rf /opt/jc_user_ro
 
 echo "System akan reboot dalam:"
 for i in 4 3 2 1; do
